@@ -25,8 +25,15 @@ public interface MediaFileRepository extends JpaRepository<MediaFile, Long> {
     // Buscar por usuario y tipo de media
     Page<MediaFile> findByUploadedByIdAndMediaTypeOrderByCreatedAtDesc(Long userId, MediaType mediaType, Pageable pageable);
 
-    // Buscar por nombre de archivo
+    // Buscar por nombre de archivo almacenado
     Optional<MediaFile> findByStoredFileName(String storedFileName);
+
+    // Buscar por nombre de archivo original
+    Page<MediaFile> findByOriginalFileNameContainingIgnoreCaseOrderByCreatedAtDesc(String fileName, Pageable pageable);
+
+    // Buscar por nombre de archivo original y tipo
+    Page<MediaFile> findByOriginalFileNameContainingIgnoreCaseAndMediaTypeOrderByCreatedAtDesc(
+            String fileName, MediaType mediaType, Pageable pageable);
 
     // Buscar archivos por rango de fechas
     @Query("SELECT m FROM MediaFile m WHERE m.createdAt BETWEEN :startDate AND :endDate ORDER BY m.createdAt DESC")
@@ -41,15 +48,22 @@ public interface MediaFileRepository extends JpaRepository<MediaFile, Long> {
                                         Pageable pageable);
 
     // Estadísticas de uso de almacenamiento por usuario
-    @Query("SELECT SUM(m.fileSize) FROM MediaFile m WHERE m.uploadedBy.id = :userId")
+    @Query("SELECT COALESCE(SUM(m.fileSize), 0) FROM MediaFile m WHERE m.uploadedBy.id = :userId")
     Long getTotalStorageUsedByUser(@Param("userId") Long userId);
 
+    // Estadísticas de uso de almacenamiento por usuario y tipo de media
+    @Query("SELECT COALESCE(SUM(m.fileSize), 0) FROM MediaFile m WHERE m.uploadedBy.id = :userId AND m.mediaType = :mediaType")
+    Long getTotalStorageUsedByUserAndMediaType(@Param("userId") Long userId, @Param("mediaType") MediaType mediaType);
+
     // Estadísticas de uso de almacenamiento por tipo de media
-    @Query("SELECT SUM(m.fileSize) FROM MediaFile m WHERE m.mediaType = :mediaType")
+    @Query("SELECT COALESCE(SUM(m.fileSize), 0) FROM MediaFile m WHERE m.mediaType = :mediaType")
     Long getTotalStorageUsedByMediaType(@Param("mediaType") MediaType mediaType);
 
     // Contar archivos por usuario
     Long countByUploadedById(Long userId);
+
+    // Contar archivos por usuario y tipo de media
+    Long countByUploadedByIdAndMediaType(Long userId, MediaType mediaType);
 
     // Contar archivos por tipo de media
     Long countByMediaType(MediaType mediaType);
@@ -64,4 +78,38 @@ public interface MediaFileRepository extends JpaRepository<MediaFile, Long> {
     // Buscar archivos recientes
     @Query("SELECT m FROM MediaFile m WHERE m.createdAt >= :since ORDER BY m.createdAt DESC")
     List<MediaFile> findRecentFiles(@Param("since") LocalDateTime since, Pageable pageable);
+
+    // Buscar archivos por URL
+    Optional<MediaFile> findByFileUrl(String fileUrl);
+
+    // Buscar archivos grandes (por encima de un tamaño específico)
+    @Query("SELECT m FROM MediaFile m WHERE m.fileSize > :sizeThreshold ORDER BY m.fileSize DESC")
+    Page<MediaFile> findLargeFiles(@Param("sizeThreshold") Long sizeThreshold, Pageable pageable);
+
+    // Obtener archivos más descargados/accedidos (si se implementa tracking)
+    @Query("SELECT m FROM MediaFile m WHERE m.mediaType = :mediaType ORDER BY m.createdAt DESC")
+    List<MediaFile> findPopularFilesByType(@Param("mediaType") MediaType mediaType, Pageable pageable);
+
+    // Buscar archivos duplicados por nombre original
+    @Query("SELECT m FROM MediaFile m WHERE m.originalFileName = :fileName AND m.uploadedBy.id = :userId")
+    List<MediaFile> findDuplicatesByOriginalFileName(@Param("fileName") String fileName, @Param("userId") Long userId);
+
+    // Estadísticas globales del sistema
+    @Query("SELECT COUNT(m) FROM MediaFile m")
+    Long getTotalFilesCount();
+
+    @Query("SELECT COALESCE(SUM(m.fileSize), 0) FROM MediaFile m")
+    Long getTotalStorageUsed();
+
+    // Buscar archivos por extensión
+    @Query("SELECT m FROM MediaFile m WHERE m.originalFileName LIKE %:extension ORDER BY m.createdAt DESC")
+    Page<MediaFile> findByFileExtension(@Param("extension") String extension, Pageable pageable);
+
+    // Obtener archivos de audio para streaming
+    @Query("SELECT m FROM MediaFile m WHERE m.mediaType = 'AUDIO' AND m.uploadedBy.id = :userId ORDER BY m.createdAt DESC")
+    Page<MediaFile> findAudioFilesByUser(@Param("userId") Long userId, Pageable pageable);
+
+    // Obtener todos los archivos de audio públicos (si se implementa concepto de público/privado)
+    @Query("SELECT m FROM MediaFile m WHERE m.mediaType = 'AUDIO' ORDER BY m.createdAt DESC")
+    Page<MediaFile> findAllAudioFiles(Pageable pageable);
 }

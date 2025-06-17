@@ -12,13 +12,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.multipart.MultipartFile;
-
-import java.io.IOException;
-import java.util.Optional;
 
 @Service
 @Transactional
@@ -31,10 +26,10 @@ public class UserService {
     private FollowRepository followRepository;
 
     @Autowired
-    private PasswordEncoder passwordEncoder;
+    private FileStorageService fileStorageService;
 
     @Autowired
-    private FileUploadService fileUploadService;
+    private FollowService followService;
 
     // Obtener usuario actual autenticado
     public User getCurrentUser() {
@@ -69,7 +64,9 @@ public class UserService {
         return userDto;
     }
 
-    // MÉTODO CORREGIDO - Actualizar perfil de usuario
+    /**
+     * Actualizar perfil de usuario - Solo metadatos
+     */
     public UserDto updateProfile(Long userId, UpdateProfileRequest request) {
         User user = getUserById(userId);
 
@@ -90,54 +87,19 @@ public class UserService {
         return new UserDto(savedUser);
     }
 
-    // MÉTODO CORREGIDO - Actualizar avatar
-    public UserDto uploadAvatar(Long userId, MultipartFile file) throws IOException {
+    /**
+     * Actualizar avatar por URL
+     */
+    public UserDto updateAvatarUrl(Long userId, String avatarUrl) {
         User user = getUserById(userId);
 
-        // Eliminar avatar anterior si existe
-        if (user.hasAvatar()) {
-            fileUploadService.deleteFile(user.getAvatarUrl());
-        }
-
-        // Subir nuevo avatar
-        String avatarUrl = fileUploadService.uploadImage(file, "avatars");
-
-        user.setAvatarUrl(avatarUrl);
-        user.setAvatarFileName(file.getOriginalFilename());
-        user.setAvatarFileType(file.getContentType());
-        user.setAvatarFileSize(file.getSize());
-
-        User savedUser = userRepository.save(user);
-        return new UserDto(savedUser);
-    }
-
-    // MÉTODO CORREGIDO - Actualizar imagen de portada
-    public UserDto uploadCoverImage(Long userId, MultipartFile file) throws IOException {
-        User user = getUserById(userId);
-
-        // Eliminar imagen de portada anterior si existe
-        if (user.hasCoverImage()) {
-            fileUploadService.deleteFile(user.getCoverImageUrl());
-        }
-
-        // Subir nueva imagen de portada
-        String coverImageUrl = fileUploadService.uploadImage(file, "covers");
-
-        user.setCoverImageUrl(coverImageUrl);
-        user.setCoverImageFileName(file.getOriginalFilename());
-        user.setCoverImageFileType(file.getContentType());
-        user.setCoverImageFileSize(file.getSize());
-
-        User savedUser = userRepository.save(user);
-        return new UserDto(savedUser);
-    }
-
-    // Eliminar avatar
-    public UserDto removeAvatar() {
-        User user = getCurrentUser();
-
-        if (user.hasAvatar()) {
-            fileUploadService.deleteFile(user.getAvatarUrl());
+        if (avatarUrl != null && !avatarUrl.trim().isEmpty()) {
+            String validatedAvatarUrl = fileStorageService.saveImageFromUrl(avatarUrl, "avatars");
+            user.setAvatarUrl(validatedAvatarUrl);
+            user.setAvatarFileName(null); // No tenemos nombre de archivo para URLs externas
+            user.setAvatarFileType("image/url");
+            user.setAvatarFileSize(null);
+        } else {
             user.setAvatarUrl(null);
             user.setAvatarFileName(null);
             user.setAvatarFileType(null);
@@ -148,12 +110,19 @@ public class UserService {
         return new UserDto(savedUser);
     }
 
-    // Eliminar imagen de portada
-    public UserDto removeCoverImage() {
-        User user = getCurrentUser();
+    /**
+     * Actualizar imagen de portada por URL
+     */
+    public UserDto updateCoverImageUrl(Long userId, String coverImageUrl) {
+        User user = getUserById(userId);
 
-        if (user.hasCoverImage()) {
-            fileUploadService.deleteFile(user.getCoverImageUrl());
+        if (coverImageUrl != null && !coverImageUrl.trim().isEmpty()) {
+            String validatedCoverUrl = fileStorageService.saveImageFromUrl(coverImageUrl, "covers");
+            user.setCoverImageUrl(validatedCoverUrl);
+            user.setCoverImageFileName(null); // No tenemos nombre de archivo para URLs externas
+            user.setCoverImageFileType("image/url");
+            user.setCoverImageFileSize(null);
+        } else {
             user.setCoverImageUrl(null);
             user.setCoverImageFileName(null);
             user.setCoverImageFileType(null);
@@ -164,14 +133,58 @@ public class UserService {
         return new UserDto(savedUser);
     }
 
-    // Buscar usuarios
+    /**
+     * Eliminar avatar
+     */
+    public UserDto removeAvatar(Long userId) {
+        User user = getUserById(userId);
+
+        // Solo eliminar si es un archivo local, no una URL externa
+        if (user.hasAvatar() && !user.getAvatarUrl().startsWith("http")) {
+            fileStorageService.deleteFile(user.getAvatarUrl());
+        }
+
+        user.setAvatarUrl(null);
+        user.setAvatarFileName(null);
+        user.setAvatarFileType(null);
+        user.setAvatarFileSize(null);
+
+        User savedUser = userRepository.save(user);
+        return new UserDto(savedUser);
+    }
+
+    /**
+     * Eliminar imagen de portada
+     */
+    public UserDto removeCoverImage(Long userId) {
+        User user = getUserById(userId);
+
+        // Solo eliminar si es un archivo local, no una URL externa
+        if (user.hasCoverImage() && !user.getCoverImageUrl().startsWith("http")) {
+            fileStorageService.deleteFile(user.getCoverImageUrl());
+        }
+
+        user.setCoverImageUrl(null);
+        user.setCoverImageFileName(null);
+        user.setCoverImageFileType(null);
+        user.setCoverImageFileSize(null);
+
+        User savedUser = userRepository.save(user);
+        return new UserDto(savedUser);
+    }
+
+    /**
+     * Buscar usuarios
+     */
     public Page<UserDto> searchUsers(String query, Pageable pageable) {
         User currentUser = getCurrentUser();
         return userRepository.searchUsers(query, pageable)
                 .map(user -> convertToDto(user, currentUser));
     }
 
-    // MÉTODO CORREGIDO - Obtener usuarios sugeridos
+    /**
+     * Obtener usuarios sugeridos
+     */
     public Page<UserDto> getSuggestedUsers(Long userId, int size) {
         User currentUser = getUserById(userId);
         Pageable pageable = PageRequest.of(0, size);
@@ -187,32 +200,63 @@ public class UserService {
                 ));
     }
 
-    // Obtener usuarios con multimedia
+    /**
+     * Obtener usuarios con multimedia
+     */
     public Page<UserDto> getUsersWithMedia(Pageable pageable) {
         User currentUser = getCurrentUser();
         return userRepository.findUsersWithCompleteProfile(pageable)
                 .map(user -> convertToDto(user, currentUser));
     }
 
-    // Obtener estadísticas de almacenamiento del usuario actual
-    public Long getCurrentUserStorageUsage() {
-        User user = getCurrentUser();
-        return userRepository.getTotalMediaStorageByUser(user.getId());
+    /**
+     * Obtener estadísticas de almacenamiento del usuario
+     */
+    public Long getUserStorageUsage(Long userId) {
+        return userRepository.getTotalMediaStorageByUser(userId);
     }
 
-    // MÉTODO FALTANTE - Eliminar usuario
+    /**
+     * Eliminar usuario
+     */
     public void deleteUser(Long userId) {
         User user = getUserById(userId);
 
-        // Eliminar archivos multimedia asociados
-        if (user.hasAvatar()) {
-            fileUploadService.deleteFile(user.getAvatarUrl());
+        // Eliminar archivos multimedia asociados (solo archivos locales)
+        if (user.hasAvatar() && !user.getAvatarUrl().startsWith("http")) {
+            fileStorageService.deleteFile(user.getAvatarUrl());
         }
-        if (user.hasCoverImage()) {
-            fileUploadService.deleteFile(user.getCoverImageUrl());
+        if (user.hasCoverImage() && !user.getCoverImageUrl().startsWith("http")) {
+            fileStorageService.deleteFile(user.getCoverImageUrl());
         }
 
         userRepository.delete(user);
+    }
+
+    /**
+     * Seguir usuario
+     */
+    public UserDto followUser(Long followerId, Long followingId) {
+        followService.toggleFollow(followerId, followingId);
+        User user = getUserById(followingId);
+        User currentUser = getUserById(followerId);
+
+        UserDto userDto = convertToDto(user, currentUser);
+        userDto.setIsFollowing(true);
+        return userDto;
+    }
+
+    /**
+     * Dejar de seguir usuario
+     */
+    public UserDto unfollowUser(Long followerId, Long followingId) {
+        followService.toggleFollow(followerId, followingId);
+        User user = getUserById(followingId);
+        User currentUser = getUserById(followerId);
+
+        UserDto userDto = convertToDto(user, currentUser);
+        userDto.setIsFollowing(false);
+        return userDto;
     }
 
     // Verificar si el username está disponible

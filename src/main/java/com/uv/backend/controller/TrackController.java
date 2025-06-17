@@ -1,20 +1,21 @@
 package com.uv.backend.controller;
 
 import com.uv.backend.dto.TrackDto;
-import com.uv.backend.dto.request.TrackRequest;
+import com.uv.backend.dto.response.ApiResponse;
 import com.uv.backend.entity.User;
 import com.uv.backend.service.TrackService;
-import com.uv.backend.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import jakarta.validation.Valid;
 import java.io.IOException;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/api/tracks")
@@ -24,12 +25,11 @@ public class TrackController {
     @Autowired
     private TrackService trackService;
 
-    @Autowired
-    private UserService userService;
-
-    // CORREGIDO - Crear track usando parámetros separados
+    /**
+     * Crear track - Audio como archivo, imagen de portada como URL
+     */
     @PostMapping
-    public ResponseEntity<TrackDto> createTrack(
+    public ResponseEntity<?> createTrack(
             @RequestParam("title") String title,
             @RequestParam("description") String description,
             @RequestParam("audioFile") MultipartFile audioFile,
@@ -37,153 +37,210 @@ public class TrackController {
             @RequestParam(value = "genre", required = false) String genre,
             @RequestParam(value = "tags", required = false) String[] tags,
             @RequestParam(value = "isPublic", defaultValue = "true") Boolean isPublic,
-            @RequestParam(value = "coverImage", required = false) MultipartFile coverImage) throws IOException {
+            @RequestParam(value = "coverImageUrl", required = false) String coverImageUrl,
+            Authentication authentication) {
 
-        java.util.Set<String> tagSet = tags != null ?
-                java.util.Set.of(tags) : java.util.Collections.emptySet();
+        try {
+            User currentUser = (User) authentication.getPrincipal();
 
-        TrackDto track = trackService.createTrack(title, description, audioFile,
-                duration, genre, tagSet, isPublic, coverImage);
-        return ResponseEntity.ok(track);
+            Set<String> tagSet = tags != null ?
+                    Set.of(tags) : Set.of();
+
+            TrackDto track = trackService.createTrack(
+                    title, description, audioFile, duration,
+                    genre, tagSet, isPublic, coverImageUrl, currentUser);
+
+            return ResponseEntity.status(HttpStatus.CREATED)
+                    .body(ApiResponse.success(track, "Track created successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error creating track: " + e.getMessage()));
+        }
     }
 
-    // Subir track alternativo (usando form data)
+    /**
+     * Subir track alternativo (manteniendo compatibilidad)
+     */
     @PostMapping("/upload")
-    public ResponseEntity<TrackDto> uploadTrack(
+    public ResponseEntity<?> uploadTrack(
             @RequestParam("audioFile") MultipartFile audioFile,
-            @RequestParam(value = "coverImage", required = false) MultipartFile coverImage,
             @RequestParam("title") String title,
             @RequestParam(value = "description", required = false) String description,
             @RequestParam("duration") Integer duration,
             @RequestParam(value = "genre", required = false) String genre,
             @RequestParam(value = "tags", required = false) String[] tags,
-            @RequestParam(value = "isPublic", defaultValue = "true") Boolean isPublic) throws IOException {
+            @RequestParam(value = "isPublic", defaultValue = "true") Boolean isPublic,
+            @RequestParam(value = "coverImageUrl", required = false) String coverImageUrl,
+            Authentication authentication) {
 
-        java.util.Set<String> tagSet = tags != null ?
-                java.util.Set.of(tags) : java.util.Collections.emptySet();
+        try {
+            User currentUser = (User) authentication.getPrincipal();
 
-        TrackDto track = trackService.createTrack(title, description, audioFile,
-                duration, genre, tagSet, isPublic, coverImage);
-        return ResponseEntity.ok(track);
+            Set<String> tagSet = tags != null ?
+                    Set.of(tags) : Set.of();
+
+            TrackDto track = trackService.createTrack(
+                    title, description, audioFile, duration,
+                    genre, tagSet, isPublic, coverImageUrl, currentUser);
+
+            return ResponseEntity.ok(ApiResponse.success(track, "Track uploaded successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error uploading track: " + e.getMessage()));
+        }
     }
 
-    // Obtener track por ID
     @GetMapping("/{id}")
-    public ResponseEntity<TrackDto> getTrackById(@PathVariable Long id) {
-        TrackDto track = trackService.getTrackById(id); // CORREGIDO - ya devuelve TrackDto
-        return ResponseEntity.ok(track);
+    public ResponseEntity<?> getTrackById(@PathVariable Long id) {
+        try {
+            TrackDto track = trackService.getTrackById(id);
+            return ResponseEntity.ok(ApiResponse.success(track));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(ApiResponse.error("Track not found"));
+        }
     }
 
-    // CORREGIDO - Obtener todos los tracks públicos
     @GetMapping("/public")
-    public ResponseEntity<Page<TrackDto>> getPublicTracks(
+    public ResponseEntity<?> getPublicTracks(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<TrackDto> tracks = trackService.getPublicTracks(pageable); // CORREGIDO
-        return ResponseEntity.ok(tracks);
+        Page<TrackDto> tracks = trackService.getPublicTracks(pageable);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
-    // Obtener tracks trending
     @GetMapping("/trending")
-    public ResponseEntity<Page<TrackDto>> getTrendingTracks(
+    public ResponseEntity<?> getTrendingTracks(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<TrackDto> tracks = trackService.getTrendingTracks(pageable); // CORREGIDO - usa Pageable
-        return ResponseEntity.ok(tracks);
+        Page<TrackDto> tracks = trackService.getTrendingTracks(pageable);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
-    // Buscar tracks
     @GetMapping("/search")
-    public ResponseEntity<Page<TrackDto>> searchTracks(
+    public ResponseEntity<?> searchTracks(
             @RequestParam String query,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<TrackDto> tracks = trackService.searchTracks(query, pageable); // CORREGIDO - ya devuelve Page<TrackDto>
-        return ResponseEntity.ok(tracks);
+        Page<TrackDto> tracks = trackService.searchTracks(query, pageable);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
-    // CORREGIDO - Obtener tracks de usuario
     @GetMapping("/user/{userId}")
-    public ResponseEntity<Page<TrackDto>> getUserTracks(
+    public ResponseEntity<?> getUserTracks(
             @PathVariable Long userId,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<TrackDto> tracks = trackService.getUserTracks(userId, pageable); // CORREGIDO - método correcto
-        return ResponseEntity.ok(tracks);
+        Page<TrackDto> tracks = trackService.getUserTracks(userId, pageable);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
-    // CORREGIDO - Actualizar track
+    /**
+     * Actualizar track - Solo metadatos
+     */
     @PutMapping("/{id}")
-    public ResponseEntity<TrackDto> updateTrack(
+    public ResponseEntity<?> updateTrack(
             @PathVariable Long id,
             @RequestParam(value = "title", required = false) String title,
             @RequestParam(value = "description", required = false) String description,
             @RequestParam(value = "genre", required = false) String genre,
             @RequestParam(value = "tags", required = false) String[] tags,
-            @RequestParam(value = "isPublic", required = false) Boolean isPublic) {
+            @RequestParam(value = "isPublic", required = false) Boolean isPublic,
+            @RequestParam(value = "coverImageUrl", required = false) String coverImageUrl,
+            Authentication authentication) {
 
-        java.util.Set<String> tagSet = tags != null ?
-                java.util.Set.of(tags) : null;
+        try {
+            Set<String> tagSet = tags != null ? Set.of(tags) : null;
 
-        TrackDto track = trackService.updateTrack(id, title, description, genre, tagSet, isPublic);
-        return ResponseEntity.ok(track);
+            TrackDto track = trackService.updateTrack(
+                    id, title, description, genre, tagSet, isPublic, coverImageUrl);
+
+            return ResponseEntity.ok(ApiResponse.success(track, "Track updated successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error updating track: " + e.getMessage()));
+        }
     }
 
-    // CORREGIDO - Eliminar track
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> deleteTrack(@PathVariable Long id) {
-        trackService.deleteTrack(id); // CORREGIDO - sin parámetro User
-        return ResponseEntity.noContent().build();
+    public ResponseEntity<?> deleteTrack(@PathVariable Long id, Authentication authentication) {
+        try {
+            trackService.deleteTrack(id);
+            return ResponseEntity.ok(ApiResponse.success(null, "Track deleted successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error deleting track: " + e.getMessage()));
+        }
     }
 
-    // Subir imagen de portada
-    @PostMapping("/{id}/cover")
-    public ResponseEntity<TrackDto> updateCoverImage(
+    /**
+     * Actualizar solo la imagen de portada por URL
+     */
+    @PutMapping("/{id}/cover")
+    public ResponseEntity<?> updateCoverImage(
             @PathVariable Long id,
-            @RequestParam("file") MultipartFile file) throws IOException {
-        TrackDto track = trackService.updateCoverImage(id, file);
-        return ResponseEntity.ok(track);
+            @RequestParam("coverImageUrl") String coverImageUrl,
+            Authentication authentication) {
+
+        try {
+            TrackDto track = trackService.updateCoverImageUrl(id, coverImageUrl);
+            return ResponseEntity.ok(ApiResponse.success(track, "Cover image updated successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error updating cover image: " + e.getMessage()));
+        }
     }
 
-    // CORREGIDO - Incrementar contador de reproducciones
     @PostMapping("/{id}/play")
-    public ResponseEntity<Void> incrementPlayCount(@PathVariable Long id) {
-        trackService.incrementPlaysCount(id); // CORREGIDO - nombre del método
-        return ResponseEntity.ok().build();
+    public ResponseEntity<?> incrementPlayCount(@PathVariable Long id) {
+        try {
+            trackService.incrementPlaysCount(id);
+            return ResponseEntity.ok(ApiResponse.success(null, "Play count incremented"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error incrementing play count: " + e.getMessage()));
+        }
     }
 
-    // Obtener tracks por género
     @GetMapping("/genre/{genre}")
-    public ResponseEntity<Page<TrackDto>> getTracksByGenre(
+    public ResponseEntity<?> getTracksByGenre(
             @PathVariable String genre,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<TrackDto> tracks = trackService.getTracksByGenre(genre, pageable); // CORREGIDO - ya devuelve Page<TrackDto>
-        return ResponseEntity.ok(tracks);
+        Page<TrackDto> tracks = trackService.getTracksByGenre(genre, pageable);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
-    // Obtener tracks por tag
     @GetMapping("/tag/{tag}")
-    public ResponseEntity<Page<TrackDto>> getTracksByTag(
+    public ResponseEntity<?> getTracksByTag(
             @PathVariable String tag,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
         Pageable pageable = PageRequest.of(page, size);
-        Page<TrackDto> tracks = trackService.getTracksByTag(tag, pageable); // CORREGIDO - ya devuelve Page<TrackDto>
-        return ResponseEntity.ok(tracks);
+        Page<TrackDto> tracks = trackService.getTracksByTag(tag, pageable);
+        return ResponseEntity.ok(ApiResponse.success(tracks));
     }
 
-    // Subir waveform
+    /**
+     * Subir waveform como archivo (opcional)
+     */
     @PostMapping("/{id}/waveform")
-    public ResponseEntity<TrackDto> updateWaveform(
+    public ResponseEntity<?> updateWaveform(
             @PathVariable Long id,
-            @RequestParam("file") MultipartFile file) throws IOException {
-        TrackDto track = trackService.updateWaveform(id, file);
-        return ResponseEntity.ok(track);
+            @RequestParam("file") MultipartFile file,
+            Authentication authentication) {
+
+        try {
+            TrackDto track = trackService.updateWaveform(id, file);
+            return ResponseEntity.ok(ApiResponse.success(track, "Waveform updated successfully"));
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error updating waveform: " + e.getMessage()));
+        }
     }
 }

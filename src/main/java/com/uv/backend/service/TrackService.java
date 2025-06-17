@@ -8,8 +8,6 @@ import com.uv.backend.repository.TrackRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -28,16 +26,17 @@ public class TrackService {
     private UserService userService;
 
     @Autowired
-    private FileUploadService fileUploadService;
+    private FileStorageService fileStorageService;
 
-    // Crear nuevo track
+    /**
+     * Crear nuevo track - Audio como archivo, imagen por URL
+     */
     public TrackDto createTrack(String title, String description, MultipartFile audioFile,
                                 Integer duration, String genre, Set<String> tags,
-                                Boolean isPublic, MultipartFile coverImageFile) throws IOException {
-        User currentUser = userService.getCurrentUser();
+                                Boolean isPublic, String coverImageUrl, User currentUser) throws IOException {
 
         // Subir archivo de audio
-        String audioUrl = fileUploadService.uploadAudio(audioFile);
+        String audioUrl = fileStorageService.uploadAudioFile(audioFile, currentUser);
 
         Track track = new Track();
         track.setTitle(title);
@@ -48,33 +47,34 @@ public class TrackService {
         track.setAudioFileSize(audioFile.getSize());
         track.setDuration(duration);
         track.setGenre(genre);
-        track.setTags(tags);
+        track.setTags(tags != null ? tags : Set.of());
         track.setIsPublic(isPublic != null ? isPublic : true);
         track.setUser(currentUser);
 
-        // Subir imagen de portada si se proporciona
-        if (coverImageFile != null && !coverImageFile.isEmpty()) {
-            String coverImageUrl = fileUploadService.uploadImage(coverImageFile, "covers");
-            track.setCoverImageUrl(coverImageUrl); // CORREGIDO
-            track.setCoverImageFileName(coverImageFile.getOriginalFilename());
-            track.setCoverImageFileType(coverImageFile.getContentType());
-            track.setCoverImageFileSize(coverImageFile.getSize());
+        // Configurar imagen de portada desde URL si se proporciona
+        if (coverImageUrl != null && !coverImageUrl.trim().isEmpty()) {
+            String validatedImageUrl = fileStorageService.saveImageFromUrl(coverImageUrl, "covers");
+            track.setCoverImageUrl(validatedImageUrl);
         }
 
         Track savedTrack = trackRepository.save(track);
         return new TrackDto(savedTrack);
     }
 
-    // Obtener track por ID
+    /**
+     * Obtener track por ID
+     */
     public TrackDto getTrackById(Long id) {
         Track track = trackRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Track not found with id: " + id));
         return new TrackDto(track);
     }
 
-    // Actualizar track
+    /**
+     * Actualizar track - Incluye actualización de imagen por URL
+     */
     public TrackDto updateTrack(Long id, String title, String description, String genre,
-                                Set<String> tags, Boolean isPublic) {
+                                Set<String> tags, Boolean isPublic, String coverImageUrl) {
         Track track = trackRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Track not found with id: " + id));
 
@@ -93,45 +93,53 @@ public class TrackService {
         if (isPublic != null) {
             track.setIsPublic(isPublic);
         }
+        if (coverImageUrl != null) {
+            if (coverImageUrl.trim().isEmpty()) {
+                // Eliminar imagen de portada
+                track.setCoverImageUrl(null);
+            } else {
+                // Actualizar imagen de portada
+                String validatedImageUrl = fileStorageService.saveImageFromUrl(coverImageUrl, "covers");
+                track.setCoverImageUrl(validatedImageUrl);
+            }
+        }
 
         Track savedTrack = trackRepository.save(track);
         return new TrackDto(savedTrack);
     }
 
-    // CORREGIDO - Actualizar imagen de portada
-    public TrackDto updateCoverImage(Long trackId, MultipartFile file) throws IOException {
+    /**
+     * Actualizar solo la imagen de portada por URL
+     */
+    public TrackDto updateCoverImageUrl(Long trackId, String coverImageUrl) {
         Track track = trackRepository.findById(trackId)
                 .orElseThrow(() -> new ResourceNotFoundException("Track not found with id: " + trackId));
 
-        // Eliminar imagen anterior si existe
-        if (track.hasCoverImage()) { // CORREGIDO
-            fileUploadService.deleteFile(track.getCoverImageUrl()); // CORREGIDO
+        if (coverImageUrl != null && !coverImageUrl.trim().isEmpty()) {
+            String validatedImageUrl = fileStorageService.saveImageFromUrl(coverImageUrl, "covers");
+            track.setCoverImageUrl(validatedImageUrl);
+        } else {
+            track.setCoverImageUrl(null);
         }
-
-        // Subir nueva imagen
-        String coverImageUrl = fileUploadService.uploadImage(file, "covers");
-
-        track.setCoverImageUrl(coverImageUrl);
-        track.setCoverImageFileName(file.getOriginalFilename());
-        track.setCoverImageFileType(file.getContentType());
-        track.setCoverImageFileSize(file.getSize());
 
         Track savedTrack = trackRepository.save(track);
         return new TrackDto(savedTrack);
     }
 
-    // Actualizar waveform
+    /**
+     * Actualizar waveform como archivo
+     */
     public TrackDto updateWaveform(Long trackId, MultipartFile file) throws IOException {
         Track track = trackRepository.findById(trackId)
                 .orElseThrow(() -> new ResourceNotFoundException("Track not found with id: " + trackId));
 
         // Eliminar waveform anterior si existe
         if (track.hasWaveform()) {
-            fileUploadService.deleteFile(track.getWaveformUrl());
+            fileStorageService.deleteFile(track.getWaveformUrl());
         }
 
-        // Subir nuevo waveform
-        String waveformUrl = fileUploadService.uploadImage(file, "waveforms");
+        // Subir nuevo waveform como imagen
+        String waveformUrl = fileStorageService.uploadImageFile(file, "waveforms");
 
         track.setWaveformUrl(waveformUrl);
         track.setWaveformFileName(file.getOriginalFilename());
@@ -141,26 +149,28 @@ public class TrackService {
         return new TrackDto(savedTrack);
     }
 
-    // Eliminar track
+    /**
+     * Eliminar track y todos sus archivos asociados
+     */
     public void deleteTrack(Long id) {
         Track track = trackRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Track not found with id: " + id));
 
         // Eliminar archivos asociados
         if (track.getAudioUrl() != null) {
-            fileUploadService.deleteFile(track.getAudioUrl());
-        }
-        if (track.hasCoverImage()) { // CORREGIDO
-            fileUploadService.deleteFile(track.getCoverImageUrl()); // CORREGIDO
+            fileStorageService.deleteFile(track.getAudioUrl());
         }
         if (track.hasWaveform()) {
-            fileUploadService.deleteFile(track.getWaveformUrl());
+            fileStorageService.deleteFile(track.getWaveformUrl());
         }
+        // No eliminar la imagen de portada porque es una URL externa
 
         trackRepository.delete(track);
     }
 
-    // Incrementar contador de reproducciones
+    /**
+     * Incrementar contador de reproducciones
+     */
     public void incrementPlaysCount(Long trackId) {
         Track track = trackRepository.findById(trackId)
                 .orElseThrow(() -> new ResourceNotFoundException("Track not found with id: " + trackId));
@@ -169,25 +179,33 @@ public class TrackService {
         trackRepository.save(track);
     }
 
-    // Obtener tracks del usuario
+    /**
+     * Obtener tracks del usuario
+     */
     public Page<TrackDto> getUserTracks(Long userId, Pageable pageable) {
         return trackRepository.findByUserId(userId, pageable)
                 .map(TrackDto::new);
     }
 
-    // Obtener tracks públicos
+    /**
+     * Obtener tracks públicos
+     */
     public Page<TrackDto> getPublicTracks(Pageable pageable) {
         return trackRepository.findByIsPublicTrueOrderByCreatedAtDesc(pageable)
                 .map(TrackDto::new);
     }
 
-    // Buscar tracks
+    /**
+     * Buscar tracks
+     */
     public Page<TrackDto> searchTracks(String query, Pageable pageable) {
         return trackRepository.searchTracks(query, pageable)
                 .map(TrackDto::new);
     }
 
-    // Obtener tracks trending
+    /**
+     * Obtener tracks trending
+     */
     public Page<TrackDto> getTrendingTracks(Pageable pageable) {
         return trackRepository.findTrendingTracks(pageable)
                 .stream()
@@ -200,13 +218,17 @@ public class TrackService {
                 ));
     }
 
-    // Obtener tracks por género
+    /**
+     * Obtener tracks por género
+     */
     public Page<TrackDto> getTracksByGenre(String genre, Pageable pageable) {
         return trackRepository.findByGenre(genre, pageable)
                 .map(TrackDto::new);
     }
 
-    // Obtener tracks por tag
+    /**
+     * Obtener tracks por tag
+     */
     public Page<TrackDto> getTracksByTag(String tag, Pageable pageable) {
         return trackRepository.findByTag(tag, pageable)
                 .map(TrackDto::new);
